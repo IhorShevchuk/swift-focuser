@@ -12,68 +12,63 @@ class TextFieldObserver: NSObject, UITextFieldDelegate {
     var onReturnTap: () -> () = {}
     weak var forwardToDelegate: UITextFieldDelegate?
     
-    @available(iOS 2.0, *)
-    func textFieldShouldBeginEditing(_ textField: UITextField) -> Bool {
-        forwardToDelegate?.textFieldShouldBeginEditing?(textField) ?? true
-    }
-
-    @available(iOS 2.0, *)
-    func textFieldDidBeginEditing(_ textField: UITextField) {
-        forwardToDelegate?.textFieldDidBeginEditing?(textField)
-    }
-
-    @available(iOS 2.0, *)
-    func textFieldShouldEndEditing(_ textField: UITextField) -> Bool {
-        forwardToDelegate?.textFieldShouldEndEditing?(textField) ?? true
-    }
-
-    @available(iOS 2.0, *)
-    func textFieldDidEndEditing(_ textField: UITextField) {
-        forwardToDelegate?.textFieldDidEndEditing?(textField)
-    }
-
-    @available(iOS 10.0, *)
-    func textFieldDidEndEditing(_ textField: UITextField, reason: UITextField.DidEndEditingReason) {
-        forwardToDelegate?.textFieldDidEndEditing?(textField)
-    }
-
-    @available(iOS 2.0, *)
-    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-        forwardToDelegate?.textField?(textField, shouldChangeCharactersIn: range, replacementString: string) ?? true
-    }
-    
-    @available(iOS 13.0, *)
-    func textFieldDidChangeSelection(_ textField: UITextField) {
-        forwardToDelegate?.textFieldDidChangeSelection?(textField)
-    }
-
-    @available(iOS 2.0, *)
-    func textFieldShouldClear(_ textField: UITextField) -> Bool {
-        forwardToDelegate?.textFieldShouldClear?(textField) ?? true
-    }
-    
-    @available(iOS 2.0, *)
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         onReturnTap()
         return forwardToDelegate?.textFieldShouldReturn?(textField) ?? true
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if forwardToDelegate?.responds(to: aSelector) == true {
+            return true
+        }
+        return super.responds(to: aSelector)
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        return forwardToDelegate
+    }
+}
+
+class TextViewObserver: NSObject, UITextViewDelegate {
+    var onReturnTap: () -> () = {}
+    weak var forwardToDelegate: UITextViewDelegate?
+
+    func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+        if (text as NSString).rangeOfCharacter(from: CharacterSet.newlines).location != NSNotFound {
+            textView.resignFirstResponder()
+            onReturnTap()
+        }
+        return forwardToDelegate?.textView?(textView, shouldChangeTextIn: range, replacementText: text) ?? true
+    }
+
+    override func responds(to aSelector: Selector!) -> Bool {
+        if forwardToDelegate?.responds(to: aSelector) == true {
+            return true
+        }
+        return super.responds(to: aSelector)
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        return forwardToDelegate
     }
 }
 
 public struct FocusModifier<Value: FocusStateCompliant & Hashable>: ViewModifier {
     @Binding var focusedField: Value?
     var equals: Value
-    @State var observer = TextFieldObserver()
-    
+    @State var textFieldObserver = TextFieldObserver()
+    @State var textViewObserver = TextViewObserver()
+
     public func body(content: Content) -> some View {
         content
             .introspectTextField { tf in
                 if !(tf.delegate is TextFieldObserver) {
-                    observer.forwardToDelegate = tf.delegate
-                    tf.delegate = observer
+                    textFieldObserver.forwardToDelegate = tf.delegate
+                    tf.delegate = textFieldObserver
                 }
                 
                 /// when user taps return we navigate to next responder
-                observer.onReturnTap = {
+                textFieldObserver.onReturnTap = {
                     focusedField = focusedField?.next ?? Value.last
                 }
 
@@ -88,6 +83,28 @@ public struct FocusModifier<Value: FocusStateCompliant & Hashable>: ViewModifier
                     tf.becomeFirstResponder()
                 }
             }
+            .introspectTextView(customize: {tv in
+                if !(tv.delegate is TextViewObserver) {
+                    textViewObserver.forwardToDelegate = tv.delegate
+                    tv.delegate = textViewObserver
+                }
+
+                /// when user taps return we navigate to next responder
+                textViewObserver.onReturnTap = {
+                    focusedField = focusedField?.next ?? Value.last
+                }
+
+                /// to show kayboard with `next` or `return`
+                if equals.hashValue == Value.last.hashValue {
+                    tv.returnKeyType = .done
+                } else {
+                    tv.returnKeyType = .next
+                }
+
+                if focusedField == equals {
+                    tv.becomeFirstResponder()
+                }
+            })
             .simultaneousGesture(TapGesture().onEnded {
               focusedField = equals
             })
